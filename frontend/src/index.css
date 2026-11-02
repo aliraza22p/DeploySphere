@@ -1,0 +1,104 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-surface-0 text-ink font-sans;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden; /* prevent horizontal overflow at all viewports */
+  }
+
+  * {
+    @apply border-line;
+  }
+
+  ::selection {
+    @apply bg-accent/30 text-white;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-accent/70 ring-offset-2 ring-offset-surface-1;
+  }
+
+  /* compact dark scrollbars */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #2b3a5c transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #2b3a5c;
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-line bg-surface-2 shadow-card;
+  }
+
+  .input {
+    @apply w-full rounded-lg border border-line bg-surface-1 px-3 py-2 text-sm text-ink
+      placeholder:text-ink-faint transition-colors
+      focus:border-accent/70 focus:outline-none focus:ring-1 focus:ring-accent/70
+      disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium
+      transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70
+      focus-visible:ring-offset-2 focus-visible:ring-offset-surface-1
+      disabled:pointer-events-none disabled:opacity-50 whitespace-nowrap;
+  }
+
+  .btn-primary {
+    @apply btn bg-accent text-white hover:bg-accent/90;
+  }
+  .btn-secondary {
+    @apply btn border border-line bg-surface-3 text-ink hover:bg-surface-4;
+  }
+  .btn-ghost {
+    @apply btn text-ink-muted hover:bg-surface-3 hover:text-ink;
+  }
+  .btn-danger {
+    @apply btn bg-red-500/90 text-white hover:bg-red-500;
+  }
+
+  .table-base {
+    @apply w-full text-sm;
+  }
+  .table-base th {
+    @apply px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-ink-faint;
+  }
+  .table-base td {
+    @apply px-4 py-3 align-middle text-ink-muted;
+  }
+  .table-base tbody tr {
+    @apply border-t border-line/70 hover:bg-surface-3/60;
+  }
+
+  .badge {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold
+      uppercase tracking-wide;
+  }
+}
