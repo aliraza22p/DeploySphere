@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import pytest
-from fastapi.testclient import TestClient
-
 from conftest import auth
+from fastapi.testclient import TestClient
 
 
 def test_health_endpoints(client: TestClient) -> None:
@@ -267,6 +266,30 @@ def test_production_seed_requires_private_admin_password(monkeypatch) -> None:
     assert _users_to_seed() == [
         ("owner@example.com", "DeploySphere Administrator", password, UserRole.administrator)
     ]
+
+
+def test_production_seed_supports_only_the_admin_user(monkeypatch, tmp_path) -> None:
+    from app.database import Base
+    from app.models import User
+    from app.seed import seed_demo_data
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import Session
+
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("DEMO_ADMIN_EMAIL", "owner@example.com")
+    monkeypatch.setenv("DEMO_ADMIN_PASSWORD", "long-private-production-password")
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'production-seed.db'}")
+    Base.metadata.create_all(bind=engine)
+    try:
+        with Session(engine) as db:
+            summary = seed_demo_data(db)
+            users = db.scalars(select(User)).all()
+
+        assert summary["users"] == 1
+        assert [user.email for user in users] == ["owner@example.com"]
+    finally:
+        engine.dispose()
 
 
 def test_settings_roundtrip(client: TestClient, admin_token: str, viewer_token: str) -> None:
