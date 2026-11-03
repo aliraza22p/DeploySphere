@@ -80,3 +80,25 @@ Import the same GitHub repository. Set the Vercel project's root directory to
 Deploy the frontend. Copy the Vercel site origin, such as
 `https://deploysphere-example.vercel.app`, into Render's `CORS_ORIGINS`, then
 redeploy the backend. The Vercel URL is the permanent mobile-friendly link.
+
+### Receive real GitHub Actions run status
+
+The GitHub repository page can send signed `workflow_run` events to DeploySphere.
+Completed runs are stored as live pipeline runs; sample dashboard records remain
+labelled as demo data.
+
+1. In the backend hosting project's environment variables, set
+   `GITHUB_WEBHOOK_SECRET` to a new, long random value and redeploy the API.
+2. In GitHub, open the repository's **Settings → Webhooks → Add webhook**:
+   - Payload URL: `https://deploysphere-api.vercel.app/api/v1/repositories/webhook/github`
+   - Content type: `application/json`
+   - Secret: the same value configured in the backend
+   - Choose **Let me select individual events**, then select **Workflow runs**.
+3. Save the webhook. The included `DeploySphere CI` workflow runs backend tests
+   and builds the frontend on pushes and pull requests to `main`.
+4. Open DeploySphere's **Pipelines** page after the first workflow finishes.
+   The signed event registers the repository and shows the actual GitHub Actions
+   result, commit, branch, and duration with a `live` source label.
+
+Keep the webhook secret private. Never add it to source files, browser-side
+environment variables, or chat messages.

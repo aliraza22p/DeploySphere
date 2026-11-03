@@ -11,17 +11,20 @@ from __future__ import annotations
 import hashlib
 import hmac
 import time
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from ..config import settings
+from ..database import SessionLocal
 from ..deps import CurrentUser, DbDep, EditorUser, record_audit
 from ..errors import AppError
 from ..models import (
     ConnectionStatus,
     DataSource,
+    Environment,
     Pipeline,
     PipelineRun,
     PipelineStage,
@@ -297,25 +300,47 @@ async def github_webhook(
     event_type = x_github_event or ""
     repo_full_name = (event.get("repository") or {}).get("full_name", "")
 
-    db = next(request.app.state.db_dependency())
+    db = SessionLocal()
     try:
         repo = db.scalars(
             select(Repository).where(Repository.full_name == repo_full_name)
         ).first()
+        if repo is None and event_type == "workflow_run":
+            owner = (event.get("repository") or {}).get("owner") or {}
+            repo_name = (event.get("repository") or {}).get("name", "")
+            owner_name = owner.get("login", "")
+            if owner_name and repo_name and repo_full_name == f"{owner_name}/{repo_name}":
+                repo = Repository(
+                    name=repo_name,
+                    full_name=repo_full_name,
+                    owner=owner_name,
+                    default_branch=(event.get("repository") or {}).get(
+                        "default_branch", "main"
+                    ),
+                    clone_url=(event.get("repository") or {}).get("clone_url", ""),
+                    connection_status=ConnectionStatus.connected,
+                    status_detail="Receiving signed GitHub Actions workflow events.",
+                    webhook_configured=True,
+                )
+                db.add(repo)
+                db.flush()
         if repo is None:
             return {"status": "ignored", "reason": "repository not connected"}
 
-        # out-of-order protection: ignore events older than the last processed
-        received = float(event.get("repository", {}).get("pushed_at_ts", 0) or 0)
-        last = _last_event_ts.get(repo.full_name, 0.0)
-        if received and received < last:
-            return {"status": "ignored", "reason": "out-of-order event"}
-        _last_event_ts[repo.full_name] = max(last, received or time.time())
-
         repo.last_event_at = utcnow()
+        repo.connection_status = ConnectionStatus.connected
+        repo.status_detail = "Receiving signed GitHub webhook deliveries."
+        repo.webhook_configured = True
 
         triggered: list[int] = []
+        triggered_statuses: dict[int, str] = {}
         if event_type == "push":
+            received = float(event.get("repository", {}).get("pushed_at_ts", 0) or 0)
+            last = _last_event_ts.get(repo.full_name, 0.0)
+            if received and received < last:
+                return {"status": "ignored", "reason": "out-of-order event"}
+            _last_event_ts[repo.full_name] = max(last, received or time.time())
+
             ref = event.get("ref", "")
             branch = ref.removeprefix("refs/heads/") if ref else ""
             head = event.get("head_commit") or {}
@@ -337,6 +362,14 @@ async def github_webhook(
                 )
                 if run is not None:
                     triggered.append(run)
+                    triggered_statuses[run] = RunStatus.queued.value
+        elif event_type == "workflow_run":
+            workflow_run = event.get("workflow_run") or {}
+            if event.get("action") == "completed":
+                run = _record_workflow_run(db, repo, event, workflow_run)
+                if run is not None:
+                    triggered.append(run)
+                    triggered_statuses[run] = db.get(PipelineRun, run).status.value
         db.commit()
     finally:
         db.close()
@@ -347,8 +380,8 @@ async def github_webhook(
                 "type": "pipeline.run.updated",
                 "payload": {
                     "run_id": run_id,
-                    "status": "queued",
-                    "trigger": "webhook",
+                    "status": triggered_statuses[run_id],
+                    "trigger": event_type,
                     "source": "live",
                 }
             }
@@ -359,6 +392,110 @@ async def github_webhook(
         "repository": repo_full_name,
         "pipelines_triggered": triggered,
     }
+
+
+def _record_workflow_run(
+    db, repo: Repository, event: dict, workflow_run: dict
+) -> int | None:
+    if workflow_run.get("status") != "completed":
+        return None
+
+    conclusion = workflow_run.get("conclusion")
+    if not conclusion:
+        return None
+    status_by_conclusion = {
+        "success": RunStatus.succeeded,
+        "neutral": RunStatus.succeeded,
+        "skipped": RunStatus.succeeded,
+        "cancelled": RunStatus.cancelled,
+    }
+    status = status_by_conclusion.get(conclusion, RunStatus.failed)
+
+    workflow_name = str(
+        (event.get("workflow") or {}).get("name")
+        or workflow_run.get("name")
+        or "GitHub Actions"
+    )[:160]
+    branch = str(workflow_run.get("head_branch") or repo.default_branch)[:160]
+    pipeline = db.scalars(
+        select(Pipeline).where(
+            Pipeline.repository_id == repo.id,
+            Pipeline.name == workflow_name,
+        )
+    ).first()
+    if pipeline is None:
+        pipeline = Pipeline(
+            name=workflow_name,
+            repository_id=repo.id,
+            branch=branch,
+            triggers=["workflow_run"],
+            stages=[{"key": "github_actions", "name": workflow_name}],
+            enabled=True,
+            environment=Environment.development,
+            created_by="github-webhook",
+        )
+        db.add(pipeline)
+        db.flush()
+
+    from sqlalchemy import func
+
+    number = (
+        db.scalar(
+            select(func.max(PipelineRun.number)).where(
+                PipelineRun.pipeline_id == pipeline.id
+            )
+        )
+        or 1200
+    ) + 1
+    now = utcnow()
+    started_at = _github_datetime(workflow_run.get("run_started_at"), now)
+    finished_at = _github_datetime(workflow_run.get("updated_at"), now)
+    duration_seconds = max(0, int((finished_at - started_at).total_seconds()))
+    run = PipelineRun(
+        pipeline_id=pipeline.id,
+        number=number,
+        status=status,
+        commit_sha=str(workflow_run.get("head_sha") or "")[:40],
+        commit_message=str(
+            (workflow_run.get("head_commit") or {}).get("message", "")
+        )[:255],
+        branch=branch,
+        triggered_by=str((workflow_run.get("actor") or {}).get("login") or "github-actions")[
+            :255
+        ],
+        trigger_event="github_workflow",
+        source=DataSource.live,
+        queued_at=started_at,
+        started_at=started_at,
+        finished_at=finished_at,
+        duration_seconds=duration_seconds,
+    )
+    db.add(run)
+    db.flush()
+    db.add(
+        PipelineStage(
+            run_id=run.id,
+            key="github_actions",
+            name=workflow_name[:120],
+            position=0,
+            status=status,
+            log=f"GitHub Actions run concluded with '{conclusion}'.",
+            started_at=started_at,
+            finished_at=finished_at,
+            duration_seconds=duration_seconds,
+        )
+    )
+    return run.id
+
+
+def _github_datetime(value: str | None, fallback: datetime) -> datetime:
+    if not value:
+        return fallback
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return fallback
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
 def _enqueue_run(db, pipeline: Pipeline, sha: str, message: str, branch: str,

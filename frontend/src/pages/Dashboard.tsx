@@ -328,6 +328,7 @@ export function DashboardPage() {
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
+                      <SourceBadge source={r.source} />
                       {r.duration_seconds != null && (
                         <span className="text-[11px] tabular-nums text-ink-faint">
                           {formatDuration(r.duration_seconds)}

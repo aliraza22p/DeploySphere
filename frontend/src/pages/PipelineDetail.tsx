@@ -8,7 +8,7 @@ import { apiFetch } from "../lib/api";
 import type { Pipeline, PipelineRunDetail, RunListResponse } from "../types";
 import { Card } from "../components/ui/card";
 import { Button } from "../components/ui/button";
-import { Badge, StatusBadge } from "../components/ui/badge";
+import { Badge, StatusBadge, SourceBadge } from "../components/ui/badge";
 import { EmptyState, ErrorState, Spinner } from "../components/ui/states";
 import { Modal } from "../components/ui/dialog";
 import { Table, THead, TBody, TR, TH, TD } from "../components/ui/table";
@@ -219,6 +219,7 @@ export function PipelineDetailPage() {
                         </p>
                       </div>
                       <div className="flex shrink-0 flex-col items-end gap-1">
+                        <SourceBadge source={run.source} />
                         <StatusBadge status={run.status} />
                         {run.duration_seconds != null && (
                           <span className="text-[10px] tabular-nums text-ink-faint">
