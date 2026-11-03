@@ -85,7 +85,8 @@ redeploy the backend. The Vercel URL is the permanent mobile-friendly link.
 
 The GitHub repository page can send signed `workflow_run` events to DeploySphere.
 Completed runs are stored as live pipeline runs; sample dashboard records remain
-labelled as demo data.
+labelled as demo data. A verified workflow event automatically registers its
+repository and pipeline, so no GitHub personal access token is required.
 
 1. In the backend hosting project's environment variables, set
    `GITHUB_WEBHOOK_SECRET` to a new, long random value and redeploy the API.
